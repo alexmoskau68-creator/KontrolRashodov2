@@ -7,12 +7,10 @@ import android.graphics.*;
 import android.net.Uri;
 import android.view.*;
 import android.widget.*;
-import com.google.mlkit.vision.common.InputImage;
+import com.googlecode.tesseract.android.TessBaseAPI;
 import com.google.mlkit.vision.text.Text;
-import com.google.mlkit.vision.text.TextRecognition;
-import com.google.mlkit.vision.text.TextRecognizer;
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 import java.io.InputStream;
+import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.regex.*;
@@ -51,15 +49,54 @@ public class ReceiptActivity extends Activity {
     }
 
     private void recognize(){
-        if(imageUri==null)return;status.setText("Распознаю чек…");
-        try{
-            InputImage input=InputImage.fromFilePath(this,imageUri);TextRecognizer recognizer=TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
-            recognizer.process(input).addOnSuccessListener(this::parse).addOnFailureListener(e->status.setText("Ошибка распознавания: "+e.getMessage()));
-        }catch(Exception e){status.setText("Ошибка изображения: "+e.getMessage());}
+        if(imageUri==null)return;
+        status.setText("Распознаю русский текст чека…");
+        new Thread(() -> {
+            try{
+                Bitmap bm;
+                try(InputStream in=getContentResolver().openInputStream(imageUri)){bm=BitmapFactory.decodeStream(in);}
+                if(bm==null)throw new Exception("Не удалось открыть изображение");
+                String raw=recognizeWithTesseract(bm);
+                runOnUiThread(() -> parseRaw(raw));
+            }catch(Exception e){
+                runOnUiThread(() -> status.setText("Ошибка распознавания: "+e.getMessage()));
+            }
+        }).start();
     }
 
-    private void parse(Text result){
-        String raw=result.getText()==null?"":result.getText();
+    private String recognizeWithTesseract(Bitmap bm) throws Exception{
+        File dataDir=new File(getFilesDir(),"tesseract");
+        File tessdata=new File(dataDir,"tessdata");
+        if(!tessdata.exists() && !tessdata.mkdirs())throw new Exception("Не удалось создать папку OCR");
+        copyAssetIfNeeded("tessdata/rus.traineddata",new File(tessdata,"rus.traineddata"));
+        copyAssetIfNeeded("tessdata/eng.traineddata",new File(tessdata,"eng.traineddata"));
+        TessBaseAPI api=new TessBaseAPI();
+        if(!api.init(dataDir.getAbsolutePath()+File.separator,"rus+eng")){
+            api.recycle();throw new Exception("Не удалось загрузить русский OCR");
+        }
+        api.setPageSegMode(TessBaseAPI.PageSegMode.PSM_AUTO);
+        api.setVariable("preserve_interword_spaces","1");
+        api.setImage(bm);
+        String text=api.getUTF8Text();
+        api.recycle();
+        bm.recycle();
+        return text==null?"":text;
+    }
+
+    private void copyAssetIfNeeded(String assetPath,File target) throws Exception{
+        if(target.exists() && target.length()>0)return;
+        File parent=target.getParentFile();if(parent!=null)parent.mkdirs();
+        try(InputStream in=getAssets().open(assetPath);java.io.FileOutputStream out=new java.io.FileOutputStream(target)){
+            byte[] buf=new byte[8192];int n;while((n=in.read(buf))!=-1)out.write(buf,0,n);
+        }
+    }
+
+    private void parseRaw(String raw){
+        parseText(raw);
+    }
+
+    private void parseText(String raw){
+        raw=raw==null?"":raw;
         String foundDate=findDate(raw);if(!foundDate.isEmpty())date.setText(foundDate);
         String foundShop=findShop(raw);if(!foundShop.isEmpty())shop.setText(foundShop);
 
