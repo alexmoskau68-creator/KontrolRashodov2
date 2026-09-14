@@ -238,7 +238,7 @@ public class ReceiptActivity extends Activity {
 
     private String cleanName(String s){
         return s.replaceAll("(?i)\\b(цена|стоимость|сумма|кол-?во|количество)\\b"," ")
-                .replaceAll("\s{2,}"," ").trim();
+                .replaceAll("\\s{2,}"," ").trim();
     }
 
     private boolean skip(String s){
