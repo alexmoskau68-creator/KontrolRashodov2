@@ -13,6 +13,11 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+      - name: Prepare Russian OCR data
+        run: |
+          mkdir -p app/src/main/assets/tessdata
+          curl -L --fail --retry 3 -o app/src/main/assets/tessdata/rus.traineddata https://github.com/tesseract-ocr/tessdata/raw/4.0.0/rus.traineddata
+          curl -L --fail --retry 3 -o app/src/main/assets/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata/raw/4.0.0/eng.traineddata
       - name: Generate Gradle wrapper
         run: gradle wrapper --gradle-version 8.9
       - name: Build debug APK
