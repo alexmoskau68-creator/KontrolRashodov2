@@ -16,11 +16,21 @@ public class DB extends SQLiteOpenHelper {
 
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {}
 
-    public void add(Expense e) {
+    private ContentValues values(Expense e) {
         ContentValues v = new ContentValues();
         v.put("date", e.date); v.put("merchant", e.merchant); v.put("category", e.category);
         v.put("currency", e.currency); v.put("note", e.note); v.put("amount", e.amount);
-        getWritableDatabase().insert("expenses", null, v);
+        return v;
+    }
+
+    public void add(Expense e) { getWritableDatabase().insert("expenses", null, values(e)); }
+
+    public void update(Expense e) {
+        getWritableDatabase().update("expenses", values(e), "id=?", new String[]{String.valueOf(e.id)});
+    }
+
+    public void delete(long id) {
+        getWritableDatabase().delete("expenses", "id=?", new String[]{String.valueOf(id)});
     }
 
     public ArrayList<Expense> all() {
