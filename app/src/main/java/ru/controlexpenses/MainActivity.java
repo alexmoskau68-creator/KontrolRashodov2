@@ -58,6 +58,10 @@ public class MainActivity extends Activity {
             card.addView(text(e.merchant==null||e.merchant.isEmpty()?"Покупка":e.merchant,18,true));
             card.addView(text(e.date+"  •  "+e.category,14,false));
             card.addView(text(money(e.amount)+" "+symbol(e.currency),21,true));
+            LinearLayout actions=new LinearLayout(this);actions.setOrientation(LinearLayout.HORIZONTAL);
+            Button edit=new Button(this);edit.setText("Изменить");edit.setAllCaps(false);edit.setOnClickListener(v->editExpense(e));
+            Button del=new Button(this);del.setText("Удалить");del.setAllCaps(false);del.setOnClickListener(v->confirmDelete(e));
+            actions.addView(edit,new LinearLayout.LayoutParams(0,-2,1));actions.addView(del,new LinearLayout.LayoutParams(0,-2,1));card.addView(actions);
             box.addView(card); box.addView(text("",4,false));
         }
         scroll.addView(box);content.addView(scroll);
@@ -65,7 +69,7 @@ public class MainActivity extends Activity {
 
     private void showAdd(){
         new AlertDialog.Builder(this).setTitle("Добавить расход").setItems(new String[]{"📷 Сканировать чек","🖼 Выбрать из галереи","✍ Ввести вручную"},(d,w)->{
-            if(w==0) openCamera(); else if(w==1) openGallery(); else manualExpense();
+            if(w==0) openCamera(); else if(w==1) openGallery(); else manualExpense(null);
         }).show();
     }
 
@@ -90,17 +94,27 @@ public class MainActivity extends Activity {
 
     private void openReceipt(Uri uri){Intent i=new Intent(this,ReceiptActivity.class);i.putExtra("image_uri",uri.toString());i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);startActivityForResult(i,REQ_RECEIPT);}
 
-    private void manualExpense(){
+    private void manualExpense(Expense existing){
+        boolean editing=existing!=null;
         LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);l.setPadding(16,6,16,6);
-        EditText shop=new EditText(this);shop.setHint("Магазин / получатель");
-        EditText amount=new EditText(this);amount.setHint("Фактически уплачено");amount.setInputType(2|8192);
+        EditText date=new EditText(this);date.setHint("Дата покупки");date.setText(editing?existing.date:new SimpleDateFormat("dd.MM.yyyy",Locale.getDefault()).format(new Date()));
+        EditText shop=new EditText(this);shop.setHint("Магазин / получатель");shop.setText(editing?existing.merchant:"");
+        EditText amount=new EditText(this);amount.setHint("Фактически уплачено");amount.setInputType(2|8192);amount.setText(editing?money(existing.amount):"");
         Spinner currency=new Spinner(this);String[] cs={"RUB ₽","BYN Br","KZT ₸","UAH ₴","EUR €","USD $","GBP £"};currency.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,cs));
-        l.addView(shop);l.addView(amount);l.addView(currency);
-        new AlertDialog.Builder(this).setTitle("Новый расход").setView(l).setPositiveButton("Сохранить",(d,w)->{
-            double a=0;try{a=Double.parseDouble(amount.getText().toString().replace(',','.'));}catch(Exception ignored){}
+        if(editing){for(int i=0;i<cs.length;i++)if(cs[i].startsWith(existing.currency))currency.setSelection(i);}
+        l.addView(date);l.addView(shop);l.addView(amount);l.addView(currency);
+        new AlertDialog.Builder(this).setTitle(editing?"Изменить расход":"Новый расход").setView(l).setPositiveButton("Сохранить",(d,w)->{
+            double a=0;try{a=Double.parseDouble(amount.getText().toString().replace(" ","").replace(',','.'));}catch(Exception ignored){}
             String cur=String.valueOf(currency.getSelectedItem()).substring(0,3);
-            db.add(new Expense(0,new SimpleDateFormat("dd.MM.yyyy",Locale.getDefault()).format(new Date()),shop.getText().toString(),"Другое",cur,"",a));showExpenses();
+            if(editing){existing.date=date.getText().toString();existing.merchant=shop.getText().toString();existing.amount=a;existing.currency=cur;db.update(existing);}else db.add(new Expense(0,date.getText().toString(),shop.getText().toString(),"Другое",cur,"",a));
+            showExpenses();
         }).setNegativeButton("Отмена",null).show();
+    }
+
+    private void editExpense(Expense e){manualExpense(e);}
+
+    private void confirmDelete(Expense e){
+        new AlertDialog.Builder(this).setTitle("Удалить расход?").setMessage("Запись будет удалена из истории расходов.").setPositiveButton("Удалить",(d,w)->{db.delete(e.id);showExpenses();}).setNegativeButton("Отмена",null).show();
     }
 
     private void showRightMenu(){
