@@ -66,46 +66,104 @@ public class ReceiptActivity extends Activity {
         ArrayList<String> productLines=new ArrayList<>();
         double itemSum=0;
         Double receiptTotal=findReceiptTotal(raw);
+        String pendingName=null;
+        boolean pendingTotal=false;
 
-        for(String line:raw.split("\\r?\\n")){
+        for(String line:raw.split("\r?\n")){
             String s=normalize(line);
-            if(s.length()<3||skip(s))continue;
+            if(s.length()<2)continue;
+
+            if(isTotalLabel(s)){
+                Double same=findRightAmount(s);
+                if(same!=null){receiptTotal=same;pendingTotal=false;}
+                else pendingTotal=true;
+                continue;
+            }
+
+            if(pendingTotal){
+                Double only=onlyAmount(s);
+                if(only!=null){receiptTotal=only;pendingTotal=false;continue;}
+                pendingTotal=false;
+            }
+
+            if(skip(s))continue;
+
             ParsedItem p=parseItemLine(s);
             if(p!=null && p.paid>0){
                 productLines.add(p.name+" — "+money(p.paid));
                 itemSum+=p.paid;
+                pendingName=null;
+                continue;
+            }
+
+            if(pendingName!=null){
+                Double only=onlyAmount(s);
+                if(only!=null){
+                    productLines.add(cleanName(pendingName)+" — "+money(only));
+                    itemSum+=only;
+                    pendingName=null;
+                    continue;
+                }
+            }
+
+            if(looksLikeProductName(s)){
+                pendingName=s;
             }
         }
 
         items.setText(join(productLines));
         if(receiptTotal!=null && receiptTotal>0) total.setText(money(receiptTotal));
         else if(itemSum>0) total.setText(money(itemSum));
-        status.setText("Распознавание завершено. Проверьте магазин, дату, товары и фактически уплаченные суммы.");
+        status.setText("Распознавание завершено. Найдено товаров: "+productLines.size()+". Проверьте данные перед сохранением.");
     }
 
     private ParsedItem parseItemLine(String s){
-        // Формат: Товар 1,250 x 249,90 = 312,38
-        Matcher calc=Pattern.compile("^(.+?)\\s+(\\d+[,.]\\d+)\\s*[xх×*]\\s*(\\d+[,.]\\d+)\\s*(?:=)?\\s*(\\d+[,.]\\d{2})$").matcher(s);
+        Matcher calc=Pattern.compile("^(.+?)\s+(\d+[,.]\d+)\s*[xх×*]\s*(\d+[,.]\d+)\s*(?:=)?\s*(\d+[,.]\d{2})$").matcher(s);
         if(calc.find() && hasLetters(calc.group(1))) return new ParsedItem(cleanName(calc.group(1)),num(calc.group(4)));
 
-        // Формат: Товар 249,90 312,38 — берём последнюю сумму как реально оплаченную за позицию
-        Matcher twoAmounts=Pattern.compile("^(.+?)\\s+(\\d+[,.]\\d{2})\\s+(\\d+[,.]\\d{2})$").matcher(s);
+        Matcher multi=Pattern.compile("^(.+?)\s+(\d+[,.]\d{2})(?:\s+\S+)?\s+(\d+[,.]\d{2})$").matcher(s);
+        if(multi.find() && hasLetters(multi.group(1))) return new ParsedItem(cleanName(multi.group(1)),num(multi.group(3)));
+
+        Matcher twoAmounts=Pattern.compile("^(.+?)\s+(\d+[,.]\d{2})\s+(\d+[,.]\d{2})$").matcher(s);
         if(twoAmounts.find() && hasLetters(twoAmounts.group(1))) return new ParsedItem(cleanName(twoAmounts.group(1)),num(twoAmounts.group(3)));
 
-        // Формат: Товар .... 312,38 — берём крайнюю правую денежную сумму
-        Matcher last=Pattern.compile("^(.+?)\\s+(\\d+[,.]\\d{2})$").matcher(s);
+        Matcher last=Pattern.compile("^(.+?)\s+(\d+[,.]\d{2})$").matcher(s);
         if(last.find() && hasLetters(last.group(1))) return new ParsedItem(cleanName(last.group(1)),num(last.group(2)));
         return null;
     }
 
     private Double findReceiptTotal(String raw){
-        Pattern p=Pattern.compile("(?i)(?:итого|к оплате|сумма к оплате|всего)\\s*[:=]?\\s*(\\d+[,.]\\d{2})");
+        Pattern p=Pattern.compile("(?i)(?:итого|к оплате|сумма к оплате|всего|итог)\s*[:=]?\s*(\d+[,.]\d{2})");
         Double found=null;
-        for(String line:raw.split("\\r?\\n")){
+        for(String line:raw.split("\r?\n")){
             Matcher m=p.matcher(normalize(line));
             if(m.find()) found=num(m.group(1));
         }
         return found;
+    }
+
+    private boolean isTotalLabel(String s){
+        String q=s.toLowerCase(Locale.ROOT);
+        return q.matches(".*\b(итого|итог|к оплате|всего|сумма к оплате)\b.*");
+    }
+
+    private Double findRightAmount(String s){
+        Matcher m=Pattern.compile("(\d+[,.]\d{2})\s*$").matcher(s);
+        return m.find()?num(m.group(1)):null;
+    }
+
+    private Double onlyAmount(String s){
+        Matcher m=Pattern.compile("^(?:=\s*)?(\d+[,.]\d{2})$").matcher(s);
+        return m.find()?num(m.group(1)):null;
+    }
+
+    private boolean looksLikeProductName(String s){
+        if(!hasLetters(s)||s.length()<3||s.length()>70)return false;
+        if(s.matches(".*\d+[,.]\d{2}.*"))return false;
+        String q=s.toLowerCase(Locale.ROOT);
+        return !q.contains("магазин")&&!q.contains("чек")&&!q.contains("адрес")&&!q.contains("телефон")
+                &&!q.contains("кассир")&&!q.contains("дата")&&!q.contains("время")&&!q.contains("инн")
+                &&!q.contains("номер")&&!q.contains("скид")&&!q.contains("налог");
     }
 
     private void save(){
@@ -116,11 +174,30 @@ public class ReceiptActivity extends Activity {
         setResult(RESULT_OK);finish();
     }
 
-    private String findDate(String raw){Matcher m=Pattern.compile("(\\d{2}[./-]\\d{2}[./-](?:\\d{2}|\\d{4}))").matcher(raw);return m.find()?m.group(1).replace('/','.').replace('-','.'):"";}
-    private String findShop(String raw){for(String l:raw.split("\\r?\\n")){String s=normalize(l);if(s.length()>=3&&s.length()<=45&&hasLetters(s)&&!skip(s)&&!s.matches(".*\\d+[,.]\\d{2}$"))return s;}return "";}
-    private String normalize(String s){return s==null?"":s.trim().replaceAll("\\s{2,}"," ");}
-    private String cleanName(String s){return s.replaceAll("(?i)\\b(цена|стоимость|сумма|кол-?во|количество)\\b"," ").replaceAll("\\s{2,}"," ").trim();}
-    private boolean skip(String s){String q=s.toLowerCase(Locale.ROOT);return q.contains("кассир")||q.contains("касса")||q.contains("ндс")||q.contains("фн ")||q.contains("фд ")||q.contains("фп ")||q.contains("адрес")||q.contains("цена за")||q.contains("оплата картой")||q.contains("наличными");}
+    private String findDate(String raw){Matcher m=Pattern.compile("(\d{2}[./-]\d{2}[./-](?:\d{2}|\d{4}))").matcher(raw);return m.find()?m.group(1).replace('/','.').replace('-','.'): "";}
+
+    private String findShop(String raw){
+        for(String l:raw.split("\r?\n")){
+            String s=normalize(l);
+            if(s.length()>=3&&s.length()<=45&&hasLetters(s)&&!skip(s)&&!s.matches(".*\d+[,.]\d{2}$"))return s;
+        }
+        return "";
+    }
+
+    private String normalize(String s){return s==null?"":s.trim().replaceAll("\s{2,}"," ");}
+
+    private String cleanName(String s){
+        return s.replaceAll("(?i)\b(цена|стоимость|сумма|кол-?во|количество)\b"," ")
+                .replaceAll("\s{2,}"," ").trim();
+    }
+
+    private boolean skip(String s){
+        String q=s.toLowerCase(Locale.ROOT);
+        return q.contains("кассир")||q.contains("касса")||q.contains("ндс")||q.contains("фн ")||q.contains("фд ")
+                ||q.contains("фп ")||q.contains("адрес")||q.contains("цена за")||q.contains("оплата картой")
+                ||q.contains("наличными")||q.contains("телефон")||q.contains("инн");
+    }
+
     private boolean hasLetters(String s){return s.matches(".*[A-Za-zА-Яа-яЁё].*");}
     private double num(String s){try{return Double.parseDouble(s.replace(" ","").replace(',','.'));}catch(Exception e){return 0;}}
     private String money(double v){return String.format(Locale.getDefault(),"%.2f",v).replace('.',',');}
