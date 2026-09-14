@@ -229,12 +229,12 @@ public class ReceiptActivity extends Activity {
     private String findShop(String raw){
         for(String l:raw.split("\r?\n")){
             String s=normalize(l);
-            if(s.length()>=3&&s.length()<=45&&hasLetters(s)&&!skip(s)&&!s.matches(".*\d+[,.]\d{2}$"))return s;
+            if(s.length()>=3&&s.length()<=45&&hasLetters(s)&&!skip(s)&&!s.matches(".*\\d+[,.]\\d{2}$"))return s;
         }
         return "";
     }
 
-    private String normalize(String s){return s==null?"":s.trim().replaceAll("\s{2,}"," ");}
+    private String normalize(String s){return s==null?"":s.trim().replaceAll("\\s{2,}"," ");}
 
     private String cleanName(String s){
         return s.replaceAll("(?i)\\b(цена|стоимость|сумма|кол-?во|количество)\\b"," ")
