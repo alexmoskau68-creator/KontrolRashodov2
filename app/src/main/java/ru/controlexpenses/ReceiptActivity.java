@@ -8,7 +8,6 @@ import android.net.Uri;
 import android.view.*;
 import android.widget.*;
 import com.googlecode.tesseract.android.TessBaseAPI;
-import com.google.mlkit.vision.text.Text;
 import java.io.InputStream;
 import java.io.File;
 import java.text.SimpleDateFormat;
@@ -155,22 +154,36 @@ public class ReceiptActivity extends Activity {
     }
 
     private ParsedItem parseItemLine(String s){
-        Matcher calc=Pattern.compile("^(.+?)\s+(\d+[,.]\d+)\s*[xх×*]\s*(\d+[,.]\d+)\s*(?:=)?\s*(\d+[,.]\d{2})$").matcher(s);
-        if(calc.find() && hasLetters(calc.group(1))) return new ParsedItem(cleanName(calc.group(1)),num(calc.group(4)));
+        // Для чеков формата Дикси: НАЗВАНИЕ ... КОЛ-ВО * ЦЕНА = СУММА.
+        // Берём именно последнюю сумму строки: это фактически уплачено за позицию.
+        String x=s.replace('×','x').replace('х','x').replace('Х','x');
+        x=x.replaceAll("\\s*=\\s*"," = ").replaceAll("\\s+"," ").trim();
 
-        Matcher multi=Pattern.compile("^(.+?)\s+(\d+[,.]\d{2})(?:\s+\S+)?\s+(\d+[,.]\d{2})$").matcher(s);
-        if(multi.find() && hasLetters(multi.group(1))) return new ParsedItem(cleanName(multi.group(1)),num(multi.group(3)));
+        Matcher calc=Pattern.compile("^(.+?)\\s+(\\d+(?:[,.]\\d+)?)\\s*[x*]\\s*(\\d+(?:[,.]\\d{2})?)\\s*=\\s*(\\d+[,.]\\d{2})$").matcher(x);
+        if(calc.find() && hasLetters(calc.group(1))){
+            return new ParsedItem(cleanName(calc.group(1)),num(calc.group(4)));
+        }
 
-        Matcher twoAmounts=Pattern.compile("^(.+?)\s+(\d+[,.]\d{2})\s+(\d+[,.]\d{2})$").matcher(s);
-        if(twoAmounts.find() && hasLetters(twoAmounts.group(1))) return new ParsedItem(cleanName(twoAmounts.group(1)),num(twoAmounts.group(3)));
+        // Иногда OCR теряет знак '='.
+        Matcher noEq=Pattern.compile("^(.+?)\\s+(\\d+(?:[,.]\\d+)?)\\s*[x*]\\s*(\\d+(?:[,.]\\d{2})?)\\s+(\\d+[,.]\\d{2})$").matcher(x);
+        if(noEq.find() && hasLetters(noEq.group(1))){
+            return new ParsedItem(cleanName(noEq.group(1)),num(noEq.group(4)));
+        }
 
-        Matcher last=Pattern.compile("^(.+?)\s+(\d+[,.]\d{2})$").matcher(s);
-        if(last.find() && hasLetters(last.group(1))) return new ParsedItem(cleanName(last.group(1)),num(last.group(2)));
+        // Универсальный вариант: строка товара содержит несколько чисел,
+        // последняя денежная сумма с двумя знаками после запятой — сумма позиции.
+        Matcher tail=Pattern.compile("^(.+?)\\s+(\\d+[,.]\\d{2})\\s*$").matcher(x);
+        if(tail.find() && hasLetters(tail.group(1))){
+            String name=cleanName(tail.group(1));
+            if(!name.matches(".*\\b(?:итого|итог|к оплате|всего)\\b.*")){
+                return new ParsedItem(name,num(tail.group(2)));
+            }
+        }
         return null;
     }
 
     private Double findReceiptTotal(String raw){
-        Pattern p=Pattern.compile("(?i)(?:итого|к оплате|сумма к оплате|всего|итог)\s*[:=]?\s*(\d+[,.]\d{2})");
+        Pattern p=Pattern.compile("(?i)(?:итого|к оплате|сумма к оплате|всего|итог)\\s*[:=]?\\s*(\\d+[,.]\\d{2})");
         Double found=null;
         for(String line:raw.split("\r?\n")){
             Matcher m=p.matcher(normalize(line));
@@ -181,22 +194,22 @@ public class ReceiptActivity extends Activity {
 
     private boolean isTotalLabel(String s){
         String q=s.toLowerCase(Locale.ROOT);
-        return q.matches(".*\b(итого|итог|к оплате|всего|сумма к оплате)\b.*");
+        return q.matches(".*\\b(итого|итог|к оплате|всего|сумма к оплате)\\b.*");
     }
 
     private Double findRightAmount(String s){
-        Matcher m=Pattern.compile("(\d+[,.]\d{2})\s*$").matcher(s);
+        Matcher m=Pattern.compile("(\\d+[,.]\\d{2})\\s*$").matcher(s);
         return m.find()?num(m.group(1)):null;
     }
 
     private Double onlyAmount(String s){
-        Matcher m=Pattern.compile("^(?:=\s*)?(\d+[,.]\d{2})$").matcher(s);
+        Matcher m=Pattern.compile("^(?:=\\s*)?(\\d+[,.]\\d{2})$").matcher(s);
         return m.find()?num(m.group(1)):null;
     }
 
     private boolean looksLikeProductName(String s){
         if(!hasLetters(s)||s.length()<3||s.length()>70)return false;
-        if(s.matches(".*\d+[,.]\d{2}.*"))return false;
+        if(s.matches(".*\\d+[,.]\\d{2}.*"))return false;
         String q=s.toLowerCase(Locale.ROOT);
         return !q.contains("магазин")&&!q.contains("чек")&&!q.contains("адрес")&&!q.contains("телефон")
                 &&!q.contains("кассир")&&!q.contains("дата")&&!q.contains("время")&&!q.contains("инн")
@@ -211,7 +224,7 @@ public class ReceiptActivity extends Activity {
         setResult(RESULT_OK);finish();
     }
 
-    private String findDate(String raw){Matcher m=Pattern.compile("(\d{2}[./-]\d{2}[./-](?:\d{2}|\d{4}))").matcher(raw);return m.find()?m.group(1).replace('/','.').replace('-','.'): "";}
+    private String findDate(String raw){Matcher m=Pattern.compile("(\\d{2}[./-]\\d{2}[./-](?:\\d{2}|\\d{4}))").matcher(raw);return m.find()?m.group(1).replace('/','.').replace('-','.'): "";}
 
     private String findShop(String raw){
         for(String l:raw.split("\r?\n")){
@@ -224,7 +237,7 @@ public class ReceiptActivity extends Activity {
     private String normalize(String s){return s==null?"":s.trim().replaceAll("\s{2,}"," ");}
 
     private String cleanName(String s){
-        return s.replaceAll("(?i)\b(цена|стоимость|сумма|кол-?во|количество)\b"," ")
+        return s.replaceAll("(?i)\\b(цена|стоимость|сумма|кол-?во|количество)\\b"," ")
                 .replaceAll("\s{2,}"," ").trim();
     }
 
