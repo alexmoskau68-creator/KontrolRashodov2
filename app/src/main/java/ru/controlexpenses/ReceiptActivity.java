@@ -59,23 +59,68 @@ public class ReceiptActivity extends Activity {
     }
 
     private void parse(Text result){
-        String raw=result.getText()==null?"":result.getText();String foundDate=findDate(raw);if(!foundDate.isEmpty())date.setText(foundDate);String foundShop=findShop(raw);if(!foundShop.isEmpty())shop.setText(foundShop);
-        ArrayList<String> productLines=new ArrayList<>();double sum=0;
+        String raw=result.getText()==null?"":result.getText();
+        String foundDate=findDate(raw);if(!foundDate.isEmpty())date.setText(foundDate);
+        String foundShop=findShop(raw);if(!foundShop.isEmpty())shop.setText(foundShop);
+
+        ArrayList<String> productLines=new ArrayList<>();
+        double itemSum=0;
+        Double receiptTotal=findReceiptTotal(raw);
+
         for(String line:raw.split("\\r?\\n")){
-            String s=line.trim().replaceAll("\\s{2,}"," ");if(s.length()<3||skip(s))continue;
-            Matcher m=Pattern.compile("^(.+?)\\s+(\\d+[,.]\\d{2})$").matcher(s);if(m.find()&&hasLetters(m.group(1))){double paid=num(m.group(2));if(paid>0){productLines.add(m.group(1).trim()+" — "+money(paid));sum+=paid;}}
+            String s=normalize(line);
+            if(s.length()<3||skip(s))continue;
+            ParsedItem p=parseItemLine(s);
+            if(p!=null && p.paid>0){
+                productLines.add(p.name+" — "+money(p.paid));
+                itemSum+=p.paid;
+            }
         }
-        items.setText(join(productLines));if(sum>0)total.setText(money(sum));status.setText("Распознавание завершено. Проверьте данные перед сохранением.");
+
+        items.setText(join(productLines));
+        if(receiptTotal!=null && receiptTotal>0) total.setText(money(receiptTotal));
+        else if(itemSum>0) total.setText(money(itemSum));
+        status.setText("Распознавание завершено. Проверьте магазин, дату, товары и фактически уплаченные суммы.");
+    }
+
+    private ParsedItem parseItemLine(String s){
+        // Формат: Товар 1,250 x 249,90 = 312,38
+        Matcher calc=Pattern.compile("^(.+?)\\s+(\\d+[,.]\\d+)\\s*[xх×*]\\s*(\\d+[,.]\\d+)\\s*(?:=)?\\s*(\\d+[,.]\\d{2})$").matcher(s);
+        if(calc.find() && hasLetters(calc.group(1))) return new ParsedItem(cleanName(calc.group(1)),num(calc.group(4)));
+
+        // Формат: Товар 249,90 312,38 — берём последнюю сумму как реально оплаченную за позицию
+        Matcher twoAmounts=Pattern.compile("^(.+?)\\s+(\\d+[,.]\\d{2})\\s+(\\d+[,.]\\d{2})$").matcher(s);
+        if(twoAmounts.find() && hasLetters(twoAmounts.group(1))) return new ParsedItem(cleanName(twoAmounts.group(1)),num(twoAmounts.group(3)));
+
+        // Формат: Товар .... 312,38 — берём крайнюю правую денежную сумму
+        Matcher last=Pattern.compile("^(.+?)\\s+(\\d+[,.]\\d{2})$").matcher(s);
+        if(last.find() && hasLetters(last.group(1))) return new ParsedItem(cleanName(last.group(1)),num(last.group(2)));
+        return null;
+    }
+
+    private Double findReceiptTotal(String raw){
+        Pattern p=Pattern.compile("(?i)(?:итого|к оплате|сумма к оплате|всего)\\s*[:=]?\\s*(\\d+[,.]\\d{2})");
+        Double found=null;
+        for(String line:raw.split("\\r?\\n")){
+            Matcher m=p.matcher(normalize(line));
+            if(m.find()) found=num(m.group(1));
+        }
+        return found;
     }
 
     private void save(){
-        double amount=num(total.getText().toString());if(amount<=0){new AlertDialog.Builder(this).setMessage("Укажите фактически уплаченную сумму за чек.").setPositiveButton("Понятно",null).show();return;}
-        String cur=String.valueOf(currency.getSelectedItem()).substring(0,3);db.add(new Expense(0,date.getText().toString(),shop.getText().toString(),"Покупки",cur,items.getText().toString(),amount));setResult(RESULT_OK);finish();
+        double amount=num(total.getText().toString());
+        if(amount<=0){new AlertDialog.Builder(this).setMessage("Укажите фактически уплаченную сумму за чек.").setPositiveButton("Понятно",null).show();return;}
+        String cur=String.valueOf(currency.getSelectedItem()).substring(0,3);
+        db.add(new Expense(0,date.getText().toString(),shop.getText().toString(),"Покупки",cur,items.getText().toString(),amount));
+        setResult(RESULT_OK);finish();
     }
 
     private String findDate(String raw){Matcher m=Pattern.compile("(\\d{2}[./-]\\d{2}[./-](?:\\d{2}|\\d{4}))").matcher(raw);return m.find()?m.group(1).replace('/','.').replace('-','.'):"";}
-    private String findShop(String raw){for(String l:raw.split("\\r?\\n")){String s=l.trim();if(s.length()>=3&&s.length()<=45&&hasLetters(s)&&!skip(s))return s;}return "";}
-    private boolean skip(String s){String q=s.toLowerCase(Locale.ROOT);return q.contains("итого")||q.contains("кассир")||q.contains("касса")||q.contains("ндс")||q.contains("фн ")||q.contains("фд ")||q.contains("фп ")||q.contains("адрес")||q.contains("к оплате")||q.contains("цена за");}
+    private String findShop(String raw){for(String l:raw.split("\\r?\\n")){String s=normalize(l);if(s.length()>=3&&s.length()<=45&&hasLetters(s)&&!skip(s)&&!s.matches(".*\\d+[,.]\\d{2}$"))return s;}return "";}
+    private String normalize(String s){return s==null?"":s.trim().replaceAll("\\s{2,}"," ");}
+    private String cleanName(String s){return s.replaceAll("(?i)\\b(цена|стоимость|сумма|кол-?во|количество)\\b"," ").replaceAll("\\s{2,}"," ").trim();}
+    private boolean skip(String s){String q=s.toLowerCase(Locale.ROOT);return q.contains("кассир")||q.contains("касса")||q.contains("ндс")||q.contains("фн ")||q.contains("фд ")||q.contains("фп ")||q.contains("адрес")||q.contains("цена за")||q.contains("оплата картой")||q.contains("наличными");}
     private boolean hasLetters(String s){return s.matches(".*[A-Za-zА-Яа-яЁё].*");}
     private double num(String s){try{return Double.parseDouble(s.replace(" ","").replace(',','.'));}catch(Exception e){return 0;}}
     private String money(double v){return String.format(Locale.getDefault(),"%.2f",v).replace('.',',');}
@@ -84,4 +129,9 @@ public class ReceiptActivity extends Activity {
     private EditText field(String h,String v){EditText e=new EditText(this);e.setHint(h);e.setText(v);e.setPadding(10,10,10,10);return e;}
     private TextView text(String s,int size,boolean bold){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setPadding(10,8,10,8);if(bold)t.setTypeface(null,1);return t;}
     private Button button(String s){Button b=new Button(this);b.setText(s);b.setAllCaps(false);return b;}
+
+    private static class ParsedItem{
+        final String name; final double paid;
+        ParsedItem(String name,double paid){this.name=name;this.paid=paid;}
+    }
 }
